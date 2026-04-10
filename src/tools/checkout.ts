@@ -147,54 +147,81 @@ export function registerCheckoutTools(server: McpServer) {
       const current = await client.getCheckout();
 
       const log: string[] = [];
-      log.push(`**BEFORE:** ${current.lines.length} items, total ${formatPrice(current.total)}, checkout token: \`${current.token}\``);
+      const unwrapRaw = (r: unknown) => {
+        const c = Array.isArray(r) ? (r as any[])[0] : (r as any);
+        return c?.lines?.length ?? "?";
+      };
+
+      log.push(`**BEFORE:** ${current.lines.length} items, total ${formatPrice(current.total)}, token: \`${current.token}\``);
 
       if (!current.lines.length) {
         return { content: [{ type: "text", text: "Cart is already empty." }] };
       }
 
-      const allLineIds = current.lines.map((l) => l.id);
-      log.push(`**Line IDs to delete:** [${allLineIds.join(", ")}]`);
-
-      // Attempt 1: lower-quantity-lines with quantity: 0 using checkout token
-      log.push(`\n**Attempt 1:** POST /orders/${current.token}/lower-quantity-lines/ {lineIds, quantity: 0}`);
+      // === Strategy A: replace:true with each existing sku at quantity 0 ===
+      // Non-empty array bypasses empty-guard, quantity 0 should be interpreted as "remove"
+      log.push(`\n**Strategy A:** replace:true with each sku at quantity:0 (non-empty array, qty=0)`);
       try {
-        const r1 = await client.lowerCheckoutLineQuantities(current.token, allLineIds, 0);
-        log.push(`→ success, response: \`${JSON.stringify(r1).slice(0, 300)}\``);
+        const zeroLines = current.lines.map((l) => ({ sku: l.product.sku, quantity: 0 }));
+        const rA = await client.rawRequest("POST", "/checkout/lines/", { lines: zeroLines, replace: true });
+        log.push(`→ 200 OK, response lines: ${unwrapRaw(rA)}`);
       } catch (e) {
         log.push(`→ failed: ${(e as Error).message}`);
       }
+      const afterA = await client.getCheckout();
+      log.push(`**After A:** ${afterA.lines.length} items`);
 
-      // Re-fetch after attempt 1
-      const mid = await client.getCheckout();
-      log.push(`\n**After attempt 1:** ${mid.lines.length} items, total ${formatPrice(mid.total)}`);
-
-      if (mid.lines.length > 0) {
-        // Attempt 2: replace with empty array
-        log.push(`\n**Attempt 2:** POST /checkout/lines/ {lines: [], replace: true}`);
-        try {
-          const r2 = await client.rawRequest("POST", "/checkout/lines/", { lines: [], replace: true });
-          log.push(`→ success, response lines count: ${(r2 as any)?.lines?.length ?? "?"}`);
-        } catch (e) {
-          log.push(`→ failed: ${(e as Error).message}`);
-        }
-
-        // Attempt 3: set each line to quantity 0 via setCheckoutLines
-        const final1 = await client.getCheckout();
-        log.push(`\n**After attempt 2:** ${final1.lines.length} items`);
-
-        if (final1.lines.length > 0) {
-          log.push(`\n**Attempt 3:** setCheckoutLines with each sku quantity:0`);
-          try {
-            const zeroLines = final1.lines.map((l) => ({ sku: l.product.sku, quantity: 0, substitution: false }));
-            await client.setCheckoutLines({ lines: zeroLines, replace: false });
-            log.push(`→ success`);
-          } catch (e) {
-            log.push(`→ failed: ${(e as Error).message}`);
-          }
-        }
+      if (afterA.lines.length === 0) {
+        log.push(`\n✅ **CLEARED via Strategy A**`);
+        return { content: [{ type: "text", text: log.join("\n") }] };
       }
 
+      // === Strategy B: replace:true with a SINGLE existing sku at quantity 1 ===
+      // Critical test: does replace:true even work to reduce cart size?
+      const firstSku = afterA.lines[0].product.sku;
+      log.push(`\n**Strategy B:** replace:true with single sku [${firstSku}] at quantity:1 (tests if replace works at all)`);
+      try {
+        const rB = await client.rawRequest("POST", "/checkout/lines/", {
+          lines: [{ sku: firstSku, quantity: 1 }],
+          replace: true,
+        });
+        log.push(`→ 200 OK, response lines: ${unwrapRaw(rB)}`);
+      } catch (e) {
+        log.push(`→ failed: ${(e as Error).message}`);
+      }
+      const afterB = await client.getCheckout();
+      log.push(`**After B:** ${afterB.lines.length} items`);
+
+      // === Strategy C: replace:true with empty array (the classic) ===
+      log.push(`\n**Strategy C:** replace:true with [] (classic)`);
+      try {
+        const rC = await client.rawRequest("POST", "/checkout/lines/", { lines: [], replace: true });
+        log.push(`→ 200 OK, response lines: ${unwrapRaw(rC)}`);
+      } catch (e) {
+        log.push(`→ failed: ${(e as Error).message}`);
+      }
+      const afterC = await client.getCheckout();
+      log.push(`**After C:** ${afterC.lines.length} items`);
+
+      // === Strategy D: PATCH /checkout/lines/ (undocumented method) ===
+      log.push(`\n**Strategy D:** PATCH /checkout/lines/ {lines: [], replace: true} (undocumented)`);
+      try {
+        const rD = await client.rawRequest("PATCH", "/checkout/lines/", { lines: [], replace: true });
+        log.push(`→ success, response lines: ${unwrapRaw(rD)}`);
+      } catch (e) {
+        log.push(`→ failed: ${(e as Error).message}`);
+      }
+      const afterD = await client.getCheckout();
+      log.push(`**After D:** ${afterD.lines.length} items`);
+
+      // === Strategy E: DELETE /checkout/lines/ (undocumented method) ===
+      log.push(`\n**Strategy E:** DELETE /checkout/lines/ (undocumented)`);
+      try {
+        const rE = await client.rawRequest("DELETE", "/checkout/lines/");
+        log.push(`→ success, response: ${JSON.stringify(rE).slice(0, 200)}`);
+      } catch (e) {
+        log.push(`→ failed: ${(e as Error).message}`);
+      }
       const final = await client.getCheckout();
       log.push(`\n**FINAL:** ${final.lines.length} items, total ${formatPrice(final.total)}`);
 
