@@ -98,11 +98,11 @@ export function registerCheckoutTools(server: McpServer) {
     },
     async ({ sku }) => {
       const client = getClient();
-      const current = await client.getCheckout();
-      const remaining = current.lines
-        .filter((l) => l.product.sku !== sku)
-        .map((l) => ({ sku: l.product.sku, quantity: l.quantity, substitution: l.substitution }));
-      const checkout = await client.setCheckoutLines({ lines: remaining, replace: true });
+      // Set quantity: 0 — explicit removal per Krónan API spec
+      const checkout = await client.setCheckoutLines({
+        lines: [{ sku, quantity: 0 }],
+        replace: false,
+      });
       return {
         content: [{ type: "text", text: `✅ Item removed.\n\n${formatCheckout(checkout)}` }],
       };
@@ -115,7 +115,15 @@ export function registerCheckoutTools(server: McpServer) {
     {},
     async () => {
       const client = getClient();
-      const checkout = await client.setCheckoutLines({ lines: [], replace: true });
+      // Get current lines and set every item to quantity: 0
+      const current = await client.getCheckout();
+      if (!current.lines.length) {
+        return { content: [{ type: "text", text: "Cart is already empty." }] };
+      }
+      const checkout = await client.setCheckoutLines({
+        lines: current.lines.map((l) => ({ sku: l.product.sku, quantity: 0 })),
+        replace: false,
+      });
       return {
         content: [{ type: "text", text: `✅ Cart cleared.\n\n${formatCheckout(checkout)}` }],
       };
