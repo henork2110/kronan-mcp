@@ -99,40 +99,33 @@ export function registerCheckoutTools(server: McpServer) {
     async ({ sku }) => {
       const client = getClient();
       const current = await client.getCheckout();
-      const before = current.lines.length;
 
-      const line = current.lines.find((l) => l.product.sku === sku);
-      if (!line) {
+      const target = current.lines.find((l) => l.product.sku === sku);
+      if (!target) {
         return {
           content: [{
             type: "text",
-            text: `⚠️ Item not found in cart (SKU: ${sku}). Cart unchanged.\n\n${formatCheckout(current)}`,
+            text: `⚠️ Item not found in cart (SKU: ${sku}).\n\n${formatCheckout(current)}`,
           }],
         };
       }
 
-      // Use lower-quantity-lines with quantity: 0 to delete the line (replace: true + filtered
-      // list is silently ignored by the server when the result would be an empty or changed list)
-      try {
-        await client.lowerCheckoutLineQuantities(current.token, [line.id], 0);
-      } catch {
-        // Fallback: replace entire cart without this SKU
-        const remaining = current.lines
-          .filter((l) => l.product.sku !== sku)
-          .map((l) => ({ sku: l.product.sku, quantity: l.quantity, substitution: l.substitution }));
-        await client.setCheckoutLines({ lines: remaining, replace: true });
-      }
+      // Build full line list keeping every existing sku at its current quantity,
+      // except the target which is set to 0 (= remove). Must use replace:true with
+      // a NON-EMPTY array — Krónan silently ignores empty-array clears.
+      const lines = current.lines.map((l) => ({
+        sku: l.product.sku,
+        quantity: l.product.sku === sku ? 0 : l.quantity,
+        substitution: l.substitution,
+      }));
 
+      await client.setCheckoutLines({ lines, replace: true });
       const updated = await client.getCheckout();
-      const after = updated.lines.length;
-      const removed = before - after;
 
       return {
         content: [{
           type: "text",
-          text: removed > 0
-            ? `✅ Item removed (${before} → ${after} items).\n\n${formatCheckout(updated)}`
-            : `⚠️ Attempted removal but cart still shows ${after} items.\n\n${formatCheckout(updated)}`,
+          text: `✅ Removed ${target.product.name}.\n\n${formatCheckout(updated)}`,
         }],
       };
     }
@@ -140,125 +133,22 @@ export function registerCheckoutTools(server: McpServer) {
 
   server.tool(
     "clear_checkout",
-    "Remove ALL items from the cart. Returns full diagnostic info.",
+    "Remove ALL items from the cart.",
     {},
     async () => {
       const client = getClient();
       const current = await client.getCheckout();
 
-      const log: string[] = [];
-      const unwrapRaw = (r: unknown) => {
-        const c = Array.isArray(r) ? (r as any[])[0] : (r as any);
-        return c?.lines?.length ?? "?";
-      };
-
-      log.push(`**BEFORE:** ${current.lines.length} items, total ${formatPrice(current.total)}, token: \`${current.token}\``);
-
       if (!current.lines.length) {
         return { content: [{ type: "text", text: "Cart is already empty." }] };
       }
 
-      // === Strategy A: replace:true with each existing sku at quantity 0 ===
-      // Non-empty array bypasses empty-guard, quantity 0 should be interpreted as "remove"
-      log.push(`\n**Strategy A:** replace:true with each sku at quantity:0 (non-empty array, qty=0)`);
-      try {
-        const zeroLines = current.lines.map((l) => ({ sku: l.product.sku, quantity: 0 }));
-        const rA = await client.rawRequest("POST", "/checkout/lines/", { lines: zeroLines, replace: true });
-        log.push(`→ 200 OK, response lines: ${unwrapRaw(rA)}`);
-      } catch (e) {
-        log.push(`→ failed: ${(e as Error).message}`);
-      }
-      const afterA = await client.getCheckout();
-      log.push(`**After A:** ${afterA.lines.length} items`);
+      // Krónan silently ignores { lines: [], replace: true }. The working pattern
+      // is a NON-EMPTY array where each existing sku is sent with quantity: 0.
+      const zeroLines = current.lines.map((l) => ({ sku: l.product.sku, quantity: 0 }));
+      await client.setCheckoutLines({ lines: zeroLines, replace: true });
 
-      if (afterA.lines.length === 0) {
-        log.push(`\n✅ **CLEARED via Strategy A**`);
-        return { content: [{ type: "text", text: log.join("\n") }] };
-      }
-
-      // === Strategy B: replace:true with a SINGLE existing sku at quantity 1 ===
-      // Critical test: does replace:true even work to reduce cart size?
-      const firstSku = afterA.lines[0].product.sku;
-      log.push(`\n**Strategy B:** replace:true with single sku [${firstSku}] at quantity:1 (tests if replace works at all)`);
-      try {
-        const rB = await client.rawRequest("POST", "/checkout/lines/", {
-          lines: [{ sku: firstSku, quantity: 1 }],
-          replace: true,
-        });
-        log.push(`→ 200 OK, response lines: ${unwrapRaw(rB)}`);
-      } catch (e) {
-        log.push(`→ failed: ${(e as Error).message}`);
-      }
-      const afterB = await client.getCheckout();
-      log.push(`**After B:** ${afterB.lines.length} items`);
-
-      // === Strategy C: replace:true with empty array (the classic) ===
-      log.push(`\n**Strategy C:** replace:true with [] (classic)`);
-      try {
-        const rC = await client.rawRequest("POST", "/checkout/lines/", { lines: [], replace: true });
-        log.push(`→ 200 OK, response lines: ${unwrapRaw(rC)}`);
-      } catch (e) {
-        log.push(`→ failed: ${(e as Error).message}`);
-      }
-      const afterC = await client.getCheckout();
-      log.push(`**After C:** ${afterC.lines.length} items`);
-
-      // === Strategy D: PATCH /checkout/lines/ (undocumented method) ===
-      log.push(`\n**Strategy D:** PATCH /checkout/lines/ {lines: [], replace: true} (undocumented)`);
-      try {
-        const rD = await client.rawRequest("PATCH", "/checkout/lines/", { lines: [], replace: true });
-        log.push(`→ success, response lines: ${unwrapRaw(rD)}`);
-      } catch (e) {
-        log.push(`→ failed: ${(e as Error).message}`);
-      }
-      const afterD = await client.getCheckout();
-      log.push(`**After D:** ${afterD.lines.length} items`);
-
-      // === Strategy E: DELETE /checkout/lines/ (undocumented method) ===
-      log.push(`\n**Strategy E:** DELETE /checkout/lines/ (undocumented)`);
-      try {
-        const rE = await client.rawRequest("DELETE", "/checkout/lines/");
-        log.push(`→ success, response: ${JSON.stringify(rE).slice(0, 200)}`);
-      } catch (e) {
-        log.push(`→ failed: ${(e as Error).message}`);
-      }
-      const final = await client.getCheckout();
-      log.push(`\n**FINAL:** ${final.lines.length} items, total ${formatPrice(final.total)}`);
-
-      return { content: [{ type: "text", text: log.join("\n") }] };
-    }
-  );
-
-  server.tool(
-    "debug_cart_clear",
-    "Diagnostic tool: attempts to clear the cart and returns the raw HTTP status + response body from Krónan so we can see what the API actually says.",
-    {},
-    async () => {
-      const client = getClient();
-
-      // First get current cart
-      const before = await client.getCheckout();
-
-      // Call rawRequest directly to see the real response
-      const raw = await client.rawRequest("POST", "/checkout/lines/", {
-        lines: [],
-        replace: true,
-      }).then((data: unknown) => ({ ok: true, data }))
-        .catch((err: Error) => ({ ok: false, error: err.message }));
-
-      // Re-fetch to see actual state
-      const after = await client.getCheckout();
-
-      return {
-        content: [{
-          type: "text",
-          text: [
-            `**Before:** ${before.lines.length} items, total ${formatPrice(before.total)}`,
-            `**API response:** ${JSON.stringify(raw, null, 2)}`,
-            `**After re-fetch:** ${after.lines.length} items, total ${formatPrice(after.total)}`,
-          ].join("\n\n"),
-        }],
-      };
+      return { content: [{ type: "text", text: "✅ Cart cleared." }] };
     }
   );
 

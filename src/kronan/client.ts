@@ -96,11 +96,6 @@ export class KronanClient {
     );
   }
 
-  // Debug: expose raw request for diagnostics
-  async rawRequest<T>(method: string, path: string, body?: unknown): Promise<T> {
-    return this.request<T>(method, path, body);
-  }
-
   // Checkout
   async getCheckout(): Promise<PublicCheckout> {
     const result = await this.request<PublicCheckout | PublicCheckout[]>("GET", "/checkout/");
@@ -153,16 +148,6 @@ export class KronanClient {
     );
   }
 
-  // Lower/delete checkout lines using the checkout token via the orders endpoint.
-  // quantity: 0 removes the line entirely. The checkout token doubles as an order token
-  // in the Krónan API — replace: true with empty array is silently ignored.
-  lowerCheckoutLineQuantities(checkoutToken: string, lineIds: number[], quantity: number) {
-    return this.request<unknown>(
-      "POST",
-      `/orders/${encodeURIComponent(checkoutToken)}/lower-quantity-lines/`,
-      { lineIds, quantity }
-    );
-  }
 
   // Product lists
   listProductLists(limit = 15, offset = 0) {
