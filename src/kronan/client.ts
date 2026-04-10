@@ -232,7 +232,7 @@ export class KronanClient {
   // Reorder uses query params, not request body
   changePlacement(lineTokens: string[]) {
     const params = lineTokens.map((t) => `lines_tokens=${encodeURIComponent(t)}`).join("&");
-    return this.request<PublicShoppingNote>("PATCH", `/shopping-notes/change-placement/?${params}`);
+    return this.request<PublicShoppingNote>("PATCH", `/shopping-notes/change-placement/?${params}`, {});
   }
 
   // Delete line uses query param
