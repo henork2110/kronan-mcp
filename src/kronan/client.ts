@@ -25,6 +25,12 @@ export class KronanClient {
     this.token = token;
   }
 
+  // Some Krónan endpoints wrap their response in an array even for single objects.
+  // This unwraps safely regardless of which shape arrives.
+  private unwrap<T>(result: T | T[]): T {
+    return Array.isArray(result) ? result[0] : result;
+  }
+
   private async request<T>(
     method: string,
     path: string,
@@ -58,10 +64,10 @@ export class KronanClient {
     return res.json() as Promise<T>;
   }
 
-  // Identity — API returns array, defensively handle both
+  // Identity
   async getMe(): Promise<PublicMe> {
     const result = await this.request<PublicMe | PublicMe[]>("GET", "/me/");
-    return Array.isArray(result) ? result[0] : result;
+    return this.unwrap(result);
   }
 
   // Products
@@ -90,16 +96,19 @@ export class KronanClient {
     );
   }
 
-  // Checkout — API returns array, but defensively handle single object too
+  // Checkout
   async getCheckout(): Promise<PublicCheckout> {
     const result = await this.request<PublicCheckout | PublicCheckout[]>("GET", "/checkout/");
-    const checkout = Array.isArray(result) ? result[0] : result;
+    const checkout = this.unwrap(result);
     if (!checkout) throw new Error("No active checkout found.");
     return checkout;
   }
 
-  setCheckoutLines(input: PublicLinesAddInput) {
-    return this.request<PublicCheckout>("POST", "/checkout/lines/", input);
+  async setCheckoutLines(input: PublicLinesAddInput): Promise<PublicCheckout> {
+    const result = await this.request<PublicCheckout | PublicCheckout[]>("POST", "/checkout/lines/", input);
+    const checkout = this.unwrap(result);
+    if (!checkout) throw new Error("No checkout returned after updating lines.");
+    return checkout;
   }
 
   // Orders
@@ -209,30 +218,28 @@ export class KronanClient {
     );
   }
 
-  // Shopping notes — API returns array, defensively handle both
+  // Shopping notes
   async getShoppingNote(): Promise<PublicShoppingNote> {
     const result = await this.request<PublicShoppingNote | PublicShoppingNote[]>("GET", "/shopping-notes/");
-    const note = Array.isArray(result) ? result[0] : result;
+    const note = this.unwrap(result);
     if (!note) throw new Error("No shopping note found.");
     return note;
   }
 
-  addShoppingNoteLine(data: { text?: string; sku?: string; quantity?: number }) {
-    return this.request<PublicShoppingNote>("POST", "/shopping-notes/add-line/", data);
+  async addShoppingNoteLine(data: { text?: string; sku?: string; quantity?: number }): Promise<PublicShoppingNote> {
+    const result = await this.request<PublicShoppingNote | PublicShoppingNote[]>("POST", "/shopping-notes/add-line/", data);
+    return this.unwrap(result);
   }
 
-  changeShoppingNoteLine(data: {
-    token?: string;
-    text?: string;
-    quantity?: number;
-  }) {
-    return this.request<PublicShoppingNote>("PATCH", "/shopping-notes/change-line/", data);
+  async changeShoppingNoteLine(data: { token?: string; text?: string; quantity?: number }): Promise<PublicShoppingNote> {
+    const result = await this.request<PublicShoppingNote | PublicShoppingNote[]>("PATCH", "/shopping-notes/change-line/", data);
+    return this.unwrap(result);
   }
 
-  // Reorder uses query params, not request body
-  changePlacement(lineTokens: string[]) {
+  async changePlacement(lineTokens: string[]): Promise<PublicShoppingNote> {
     const params = lineTokens.map((t) => `lines_tokens=${encodeURIComponent(t)}`).join("&");
-    return this.request<PublicShoppingNote>("PATCH", `/shopping-notes/change-placement/?${params}`, {});
+    const result = await this.request<PublicShoppingNote | PublicShoppingNote[]>("PATCH", `/shopping-notes/change-placement/?${params}`, {});
+    return this.unwrap(result);
   }
 
   // Delete line uses query param
@@ -254,12 +261,13 @@ export class KronanClient {
     return this.request<void>("DELETE", "/shopping-notes/delete-shopping-note/");
   }
 
-  toggleCompleteOnLine(lineToken: string) {
-    return this.request<PublicShoppingNote>(
+  async toggleCompleteOnLine(lineToken: string): Promise<PublicShoppingNote> {
+    const result = await this.request<PublicShoppingNote | PublicShoppingNote[]>(
       "PATCH",
       "/shopping-notes/toggle-complete-on-line/",
       { token: lineToken }
     );
+    return this.unwrap(result);
   }
 
   getArchivedShoppingNoteLines() {
@@ -275,7 +283,8 @@ export class KronanClient {
     }
   }
 
-  applyStoreProductOrder() {
-    return this.request<PublicShoppingNote>("POST", "/shopping-notes/store-product-order/", {});
+  async applyStoreProductOrder(): Promise<PublicShoppingNote> {
+    const result = await this.request<PublicShoppingNote | PublicShoppingNote[]>("POST", "/shopping-notes/store-product-order/", {});
+    return this.unwrap(result);
   }
 }
