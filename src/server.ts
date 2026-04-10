@@ -10,8 +10,12 @@ const PORT = parseInt(process.env.PORT ?? "3000", 10);
 const app = express();
 app.use(express.json());
 
-// Track active MCP sessions: sessionId → transport
-const sessions = new Map<string, StreamableHTTPServerTransport>();
+// Track active MCP sessions: sessionId → { transport, token }
+interface Session {
+  transport: StreamableHTTPServerTransport;
+  token: string;
+}
+const sessions = new Map<string, Session>();
 
 function createMcpServer(): McpServer {
   const server = new McpServer({
@@ -32,7 +36,12 @@ function extractToken(req: express.Request): string | null {
 
 // MCP endpoint — POST (new session or existing session message)
 app.post("/mcp", async (req, res) => {
-  const token = extractToken(req);
+  const existingSessionId = req.headers["mcp-session-id"] as string | undefined;
+  const existingSession = existingSessionId ? sessions.get(existingSessionId) : undefined;
+
+  // Use token from request, or fall back to the stored token for this session
+  const token = extractToken(req) ?? existingSession?.token ?? null;
+
   if (!token) {
     res.status(401).json({
       error: "No Krónan API key provided. Add your Krónan access token in Poke Settings → Connections.",
@@ -40,29 +49,28 @@ app.post("/mcp", async (req, res) => {
     return;
   }
 
-  const existingSessionId = req.headers["mcp-session-id"] as string | undefined;
+  let session = existingSession;
 
-  let transport = existingSessionId ? sessions.get(existingSessionId) : undefined;
-
-  if (!transport) {
-    // New session
+  if (!session) {
+    // New session — create transport and MCP server
     const sessionId = existingSessionId ?? randomUUID();
-    transport = new StreamableHTTPServerTransport({
+    const transport = new StreamableHTTPServerTransport({
       sessionIdGenerator: () => sessionId,
     });
 
     const server = createMcpServer();
     await server.connect(transport);
-    sessions.set(sessionId, transport);
 
-    // Clean up on close
+    session = { transport, token };
+    sessions.set(sessionId, session);
+
     transport.onclose = () => {
       sessions.delete(sessionId);
     };
   }
 
   await tokenStore.run(token, () =>
-    (transport as StreamableHTTPServerTransport).handleRequest(req, res, req.body)
+    (session as Session).transport.handleRequest(req, res, req.body)
   );
 });
 
@@ -74,20 +82,17 @@ app.get("/mcp", async (req, res) => {
     return;
   }
 
-  const transport = sessions.get(sessionId);
-  if (!transport) {
+  const session = sessions.get(sessionId);
+  if (!session) {
     res.status(404).json({ error: "Session not found" });
     return;
   }
 
-  const token = extractToken(req);
-  if (!token) {
-    res.status(401).json({ error: "Missing Krónan API key" });
-    return;
-  }
+  // Use token from request or fall back to stored session token
+  const token = extractToken(req) ?? session.token;
 
   await tokenStore.run(token, () =>
-    (transport as StreamableHTTPServerTransport).handleRequest(req, res)
+    session.transport.handleRequest(req, res)
   );
 });
 
@@ -95,9 +100,9 @@ app.get("/mcp", async (req, res) => {
 app.delete("/mcp", async (req, res) => {
   const sessionId = req.headers["mcp-session-id"] as string | undefined;
   if (sessionId) {
-    const transport = sessions.get(sessionId);
-    if (transport) {
-      await transport.close();
+    const s = sessions.get(sessionId);
+    if (s) {
+      await s.transport.close();
       sessions.delete(sessionId);
     }
   }
