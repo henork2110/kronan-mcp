@@ -1,4 +1,4 @@
-import type { PublicProduct } from "../kronan/types.js";
+import type { PublicSearchHit } from "../kronan/types.js";
 import type { Ingredient } from "../recipes/database.js";
 import { KronanClient } from "../kronan/client.js";
 
@@ -7,9 +7,9 @@ export type BudgetMode = "cheapest" | "balanced" | "premium";
 export interface MatchedItem {
   ingredient: string;
   searchedFor: string;
-  product: PublicProduct | null;
-  quantity: number; // number of packs/units to buy
-  estimatedTotal: number; // ISK
+  product: PublicSearchHit | null;
+  quantity: number;
+  estimatedTotal: number;
   note?: string;
 }
 
@@ -21,17 +21,19 @@ export interface RecipePlan {
   missing: string[];
 }
 
+// Get effective price (discounted if on sale, else base price)
+export function effectivePrice(p: PublicSearchHit): number {
+  return p.detail?.onSale ? p.detail.discountedPrice : p.price;
+}
+
 // Score a product against a desired ingredient
-function scoreProduct(product: PublicProduct, ingredientName: string): number {
+function scoreProduct(product: PublicSearchHit, ingredientName: string): number {
   const productNameLower = product.name.toLowerCase();
   const ingredientLower = ingredientName.toLowerCase();
   let score = 0;
 
-  // Exact name match
   if (productNameLower === ingredientLower) score += 100;
-  // Name contains ingredient
   else if (productNameLower.includes(ingredientLower)) score += 50;
-  // Ingredient contains product name word
   else {
     const words = ingredientLower.split(/\s+/);
     for (const word of words) {
@@ -39,39 +41,20 @@ function scoreProduct(product: PublicProduct, ingredientName: string): number {
     }
   }
 
-  // Prefer items on sale
-  if (product.onSale) score += 5;
-
-  // Penalize shortage
+  if (product.detail?.onSale) score += 5;
   if (product.temporaryShortage) score -= 30;
-
-  // Prefer items with price per kilo (usually more informative)
   if (product.pricePerKilo !== null) score += 2;
 
   return score;
 }
 
-// Estimate how many units to buy for a needed amount
-function estimateQuantity(
-  product: PublicProduct,
-  neededAmount: number,
-  unit: string
-): number {
-  // Simple heuristic: default to 1, increase if needed amount seems large
-  // Products are opaque in size from search alone, so we buy 1 unless clearly needing more
+function estimateQuantity(product: PublicSearchHit, neededAmount: number, unit: string): number {
   const nameLower = product.name.toLowerCase();
-
-  // If it looks like a small item and we need a lot, suggest 2
-  if (
-    (unit === "g" && neededAmount > 400) ||
-    (unit === "ml" && neededAmount > 400)
-  ) {
-    // Many Icelandic products are 250–500g packs; buy 2 if needed > 400g and pack is likely 250g
+  if ((unit === "g" && neededAmount > 400) || (unit === "ml" && neededAmount > 400)) {
     if (nameLower.includes("250") || nameLower.includes("200g")) {
       return Math.ceil(neededAmount / 250);
     }
   }
-
   return 1;
 }
 
@@ -80,43 +63,32 @@ export async function matchIngredient(
   ingredient: Ingredient,
   budgetMode: BudgetMode = "balanced"
 ): Promise<MatchedItem> {
-  let bestProduct: PublicProduct | null = null;
+  let bestProduct: PublicSearchHit | null = null;
   let bestScore = -1;
 
-  // Try each search term until we find a good match
   for (const term of ingredient.searchTerms) {
     try {
-      const results = await client.searchProducts(term, 10);
+      // Use withDetail: true to get sale prices
+      const results = await client.searchProducts(term, 10, 1, true);
       if (!results.hits.length) continue;
 
       for (const product of results.hits) {
         const score = scoreProduct(product, ingredient.name);
-        if (score > bestScore) {
-          // Budget mode adjustments
-          const effectivePrice = product.onSale
-            ? product.discountedPrice
-            : product.price;
+        const price = effectivePrice(product);
 
-          if (budgetMode === "cheapest" && bestProduct) {
-            const bestEffectivePrice = bestProduct.onSale
-              ? bestProduct.discountedPrice
-              : bestProduct.price;
-            // Only switch if cheaper AND still relevant
-            if (score >= bestScore - 10 && effectivePrice < bestEffectivePrice) {
-              bestProduct = product;
-              bestScore = score;
-            } else if (score > bestScore) {
-              bestProduct = product;
-              bestScore = score;
-            }
-          } else {
+        if (score > bestScore) {
+          bestProduct = product;
+          bestScore = score;
+        } else if (budgetMode === "cheapest" && bestProduct && score >= bestScore - 10) {
+          const bestPrice = effectivePrice(bestProduct);
+          if (price < bestPrice) {
             bestProduct = product;
             bestScore = score;
           }
         }
       }
 
-      if (bestScore >= 50) break; // Good enough match found
+      if (bestScore >= 50) break;
     } catch {
       // Continue to next search term
     }
@@ -134,16 +106,14 @@ export async function matchIngredient(
   }
 
   const qty = estimateQuantity(bestProduct, ingredient.amount, ingredient.unit);
-  const unitPrice = bestProduct.onSale
-    ? bestProduct.discountedPrice
-    : bestProduct.price;
+  const price = effectivePrice(bestProduct);
 
   return {
     ingredient: ingredient.name,
     searchedFor: ingredient.searchTerms[0],
     product: bestProduct,
     quantity: qty,
-    estimatedTotal: unitPrice * qty,
+    estimatedTotal: price * qty,
   };
 }
 
@@ -152,7 +122,6 @@ export async function matchIngredients(
   ingredients: Ingredient[],
   budgetMode: BudgetMode = "balanced"
 ): Promise<MatchedItem[]> {
-  // Match sequentially to respect rate limits
   const results: MatchedItem[] = [];
   for (const ing of ingredients) {
     const match = await matchIngredient(client, ing, budgetMode);
@@ -168,14 +137,7 @@ export function buildPlanSummary(
 ): RecipePlan {
   const missing = items.filter((i) => !i.product).map((i) => i.ingredient);
   const totalEstimate = items.reduce((sum, i) => sum + i.estimatedTotal, 0);
-
-  return {
-    recipeName,
-    servings,
-    items,
-    totalEstimate,
-    missing,
-  };
+  return { recipeName, servings, items, totalEstimate, missing };
 }
 
 export function formatPrice(isk: number): string {
@@ -183,16 +145,12 @@ export function formatPrice(isk: number): string {
 }
 
 export function formatPlan(plan: RecipePlan): string {
-  const lines: string[] = [
-    `**${plan.recipeName}** (${plan.servings} servings)\n`,
-  ];
+  const lines: string[] = [`**${plan.recipeName}** (${plan.servings} servings)\n`];
 
   for (const item of plan.items) {
     if (item.product) {
-      const price = item.product.onSale
-        ? item.product.discountedPrice
-        : item.product.price;
-      const saleTag = item.product.onSale ? " 🔖 on sale" : "";
+      const price = effectivePrice(item.product);
+      const saleTag = item.product.detail?.onSale ? " 🔖 on sale" : "";
       lines.push(
         `• ${item.ingredient}: **${item.product.name}** — ${formatPrice(price)} × ${item.quantity} = ${formatPrice(item.estimatedTotal)}${saleTag}`
       );

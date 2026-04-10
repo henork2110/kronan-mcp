@@ -1,3 +1,9 @@
+export interface PublicProductTag {
+  slug: string;
+  name: string;
+}
+
+// Base product shape used in checkout, product lists, categories
 export interface PublicProduct {
   sku: string;
   name: string;
@@ -13,6 +19,7 @@ export interface PublicProduct {
   temporaryShortage: boolean;
 }
 
+// Full product detail (GET /products/{sku}/)
 export interface PublicProductDetail extends PublicProduct {
   description: string;
   image: string;
@@ -21,11 +28,36 @@ export interface PublicProductDetail extends PublicProduct {
   tags: PublicProductTag[];
 }
 
-export interface PublicProductTag {
-  name: string;
-  slug: string;
+// Search hit — discount info is nested inside `detail` only when withDetail: true
+export interface PublicSearchDetail {
+  discountedPrice: number;
+  discountPercent: number;
+  onSale: boolean;
+  tags: PublicProductTag[];
 }
 
+export interface PublicSearchHit {
+  sku: string;
+  name: string;
+  price: number;
+  thumbnail: string | null;
+  temporaryShortage: boolean;
+  priceInfo: string | null;
+  chargedByWeight: boolean;
+  pricePerKilo: number | null;
+  baseComparisonUnit: string | null;
+  detail: PublicSearchDetail | null; // only present when withDetail: true
+}
+
+export interface SearchResult {
+  count: number;
+  page: number;
+  pageCount: number;
+  hasNextPage: boolean;
+  hits: PublicSearchHit[];
+}
+
+// Checkout
 export interface PublicCheckoutLine {
   id: number;
   quantity: number;
@@ -48,15 +80,16 @@ export interface PublicCheckout {
 
 export interface PublicLineInput {
   sku: string;
-  quantity: number;
+  quantity?: number;
   substitution?: boolean;
 }
 
 export interface PublicLinesAddInput {
   lines: PublicLineInput[];
-  replace: boolean;
+  replace?: boolean;
 }
 
+// Orders
 export interface PublicOrderLine {
   id: number;
   productName: string;
@@ -90,14 +123,26 @@ export interface PublicOrderSummary {
   status: string;
   type: string | null;
   total: number;
+  discount: number;
+  deliveryDate: string | null;
+  allowAlterOrderLines: boolean;
+}
+
+// Shopping notes
+export interface PublicShoppingNoteProduct {
+  sku: string | null;
+  name: string;
+  description: string;
+  thumbnail: string;
 }
 
 export interface PublicShoppingNoteLine {
   token: string;
   text: string | null;
-  sku: string | null;
   quantity: number | null;
-  completed: boolean;
+  product: PublicShoppingNoteProduct | null;
+  placement: number;
+  isCompleted: boolean;
 }
 
 export interface PublicShoppingNote {
@@ -106,6 +151,13 @@ export interface PublicShoppingNote {
   lines: PublicShoppingNoteLine[];
 }
 
+export interface PublicShoppingNoteLineArchived {
+  token: string;
+  text: string;
+  completedCount: number;
+}
+
+// Product lists
 export interface PublicProductListItem {
   id: number;
   quantity: number;
@@ -123,37 +175,59 @@ export interface PublicProductListDetail extends PublicProductList {
   items: PublicProductListItem[];
 }
 
+// Purchase stats
+export interface PublicProductPurchaseStats {
+  id: number;
+  product: PublicProduct;
+  purchaseCount: number;
+  quantityPurchased: number;
+  averagePurchaseQuantity: number | null;
+  lastPurchaseQuantity: number;
+  averagePurchaseIntervalDays: number | null;
+  firstPurchaseDate: string | null;
+  lastPurchaseDate: string | null;
+  isIgnored: boolean;
+}
+
+// Me
 export interface PublicMe {
   type: "user" | "customer_group";
   name: string;
 }
 
-export interface PublicProductPurchaseStats {
-  id: number;
-  sku: string;
-  productName: string;
-  thumbnail: string;
-  lastPurchased: string;
-  ignored: boolean;
+// Categories
+export interface PublicCategoryLevel2 {
+  slug: string;
+  name: string;
 }
 
+export interface PublicCategoryLevel1 {
+  slug: string;
+  name: string;
+  children: PublicCategoryLevel2[];
+}
+
+export interface PublicCategory {
+  slug: string;
+  name: string;
+  backgroundImage: string | null;
+  icon: string | null;
+  children: PublicCategoryLevel1[];
+}
+
+export interface PublicCategoryProductList {
+  name: string;
+  count: number;
+  page: number;
+  pageCount: number;
+  hasNextPage: boolean;
+  products: PublicProduct[];
+}
+
+// Pagination wrapper (used by orders, product-lists, stats)
 export interface PaginatedResult<T> {
   count: number;
   next: string | null;
   previous: string | null;
   results: T[];
-}
-
-export interface SearchResult {
-  count: number;
-  page: number;
-  pageCount: number;
-  hasNextPage: boolean;
-  hits: PublicProduct[];
-}
-
-export interface PublicCategory {
-  name: string;
-  slug: string;
-  children?: PublicCategory[];
 }

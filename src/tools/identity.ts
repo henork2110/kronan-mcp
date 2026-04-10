@@ -10,12 +10,7 @@ export function registerIdentityTools(server: McpServer) {
       const client = getClient();
       const me = await client.getMe();
       return {
-        content: [
-          {
-            type: "text",
-            text: `Logged in as: **${me.name}** (${me.type})`,
-          },
-        ],
+        content: [{ type: "text", text: `Logged in as: **${me.name}** (${me.type})` }],
       };
     }
   );

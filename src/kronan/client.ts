@@ -1,6 +1,5 @@
 import type {
   PublicMe,
-  PublicProduct,
   PublicProductDetail,
   PublicCheckout,
   PublicLinesAddInput,
@@ -9,10 +8,12 @@ import type {
   PublicProductList,
   PublicProductListDetail,
   PublicShoppingNote,
+  PublicShoppingNoteLineArchived,
   PublicProductPurchaseStats,
   PaginatedResult,
   SearchResult,
   PublicCategory,
+  PublicCategoryProductList,
 } from "./types.js";
 
 const BASE_URL = "https://api.kronan.is/api/v1";
@@ -29,13 +30,17 @@ export class KronanClient {
     path: string,
     body?: unknown
   ): Promise<T> {
+    const headers: Record<string, string> = {
+      Authorization: `AccessToken ${this.token}`,
+      Accept: "application/json",
+    };
+    if (body !== undefined) {
+      headers["Content-Type"] = "application/json";
+    }
+
     const res = await fetch(`${BASE_URL}${path}`, {
       method,
-      headers: {
-        Authorization: `AccessToken ${this.token}`,
-        "Content-Type": "application/json",
-        Accept: "application/json",
-      },
+      headers,
       body: body !== undefined ? JSON.stringify(body) : undefined,
     });
 
@@ -47,13 +52,16 @@ export class KronanClient {
       throw new Error(`Krónan API error ${res.status}: ${text}`);
     }
 
-    if (res.status === 204) return undefined as T;
+    if (res.status === 204 || res.headers.get("content-length") === "0") {
+      return undefined as T;
+    }
     return res.json() as Promise<T>;
   }
 
-  // Identity
-  getMe() {
-    return this.request<PublicMe>("GET", "/me/");
+  // Identity — returns array, unwrap first element
+  async getMe(): Promise<PublicMe> {
+    const result = await this.request<PublicMe[]>("GET", "/me/");
+    return result[0];
   }
 
   // Products
@@ -75,24 +83,25 @@ export class KronanClient {
     return this.request<PublicCategory[]>("GET", "/categories/");
   }
 
-  getCategoryProducts(slug: string, pageSize = 48, page = 1) {
-    return this.request<{ count: number; results: PublicProduct[] }>(
+  getCategoryProducts(slug: string, page = 1) {
+    return this.request<PublicCategoryProductList>(
       "GET",
-      `/categories/${encodeURIComponent(slug)}/products/?page=${page}&pageSize=${pageSize}`
+      `/categories/${encodeURIComponent(slug)}/products/?page=${page}`
     );
   }
 
-  // Checkout
-  getCheckout() {
-    return this.request<PublicCheckout>("GET", "/checkout/");
+  // Checkout — returns array, unwrap first element
+  async getCheckout(): Promise<PublicCheckout> {
+    const result = await this.request<PublicCheckout[]>("GET", "/checkout/");
+    return result[0];
   }
 
-  setCheckoutLines(lines: PublicLinesAddInput) {
-    return this.request<PublicCheckout>("POST", "/checkout/lines/", lines);
+  setCheckoutLines(input: PublicLinesAddInput) {
+    return this.request<PublicCheckout>("POST", "/checkout/lines/", input);
   }
 
   // Orders
-  listOrders(limit = 10, offset = 0) {
+  listOrders(limit = 15, offset = 0) {
     return this.request<PaginatedResult<PublicOrderSummary>>(
       "GET",
       `/orders/?limit=${limit}&offset=${offset}`
@@ -104,40 +113,40 @@ export class KronanClient {
   }
 
   deleteOrderLines(orderToken: string, lineIds: number[]) {
-    return this.request<void>("POST", `/orders/${encodeURIComponent(orderToken)}/delete-lines/`, {
-      line_ids: lineIds,
-    });
-  }
-
-  toggleOrderLineSubstitution(orderToken: string, lineIds: number[]) {
-    return this.request<void>(
+    return this.request<PublicOrder>(
       "POST",
-      `/orders/${encodeURIComponent(orderToken)}/lines-toggle-substitution/`,
-      { line_ids: lineIds }
+      `/orders/${encodeURIComponent(orderToken)}/delete-lines/`,
+      { lineIds }
     );
   }
 
-  lowerOrderLineQuantities(
-    orderToken: string,
-    lines: { id: number; quantity: number }[]
-  ) {
-    return this.request<void>(
+  toggleOrderLineSubstitution(orderToken: string, lineIds: number[]) {
+    return this.request<PublicOrder>(
+      "POST",
+      `/orders/${encodeURIComponent(orderToken)}/lines-toggle-substitution/`,
+      { lineIds }
+    );
+  }
+
+  // Lowers all specified lines to the same target quantity
+  lowerOrderLineQuantities(orderToken: string, lineIds: number[], quantity: number) {
+    return this.request<PublicOrder>(
       "POST",
       `/orders/${encodeURIComponent(orderToken)}/lower-quantity-lines/`,
-      { lines }
+      { lineIds, quantity }
     );
   }
 
   // Product lists
-  listProductLists() {
-    return this.request<PublicProductList[]>("GET", "/product-lists/");
+  listProductLists(limit = 15, offset = 0) {
+    return this.request<PaginatedResult<PublicProductList>>(
+      "GET",
+      `/product-lists/?limit=${limit}&offset=${offset}`
+    );
   }
 
   createProductList(name: string, description = "") {
-    return this.request<PublicProductList>("POST", "/product-lists/", {
-      name,
-      description,
-    });
+    return this.request<PublicProductList>("POST", "/product-lists/", { name, description });
   }
 
   getProductList(token: string) {
@@ -167,7 +176,7 @@ export class KronanClient {
   }
 
   updateProductListItem(token: string, sku: string, quantity: number) {
-    return this.request<void>(
+    return this.request<PublicProductListDetail>(
       "POST",
       `/product-lists/${encodeURIComponent(token)}/update-item/`,
       { sku, quantity }
@@ -175,7 +184,7 @@ export class KronanClient {
   }
 
   sortProductListItems(token: string) {
-    return this.request<void>(
+    return this.request<PublicProductListDetail>(
       "POST",
       `/product-lists/${encodeURIComponent(token)}/sort-items/`,
       {}
@@ -190,17 +199,18 @@ export class KronanClient {
     );
   }
 
-  setPurchaseStatIgnored(id: number, ignored: boolean) {
-    return this.request<void>(
+  setPurchaseStatIgnored(id: number, isIgnored: boolean) {
+    return this.request<PublicProductPurchaseStats>(
       "PATCH",
       `/product-purchase-stats/${id}/set-ignored/`,
-      { ignored }
+      { isIgnored }
     );
   }
 
-  // Shopping notes
-  getShoppingNote() {
-    return this.request<PublicShoppingNote>("GET", "/shopping-notes/");
+  // Shopping notes — returns array, unwrap first element
+  async getShoppingNote(): Promise<PublicShoppingNote> {
+    const result = await this.request<PublicShoppingNote[]>("GET", "/shopping-notes/");
+    return result[0];
   }
 
   addShoppingNoteLine(data: { text?: string; sku?: string; quantity?: number }) {
@@ -208,56 +218,60 @@ export class KronanClient {
   }
 
   changeShoppingNoteLine(data: {
-    token: string;
+    token?: string;
     text?: string;
-    sku?: string;
     quantity?: number;
   }) {
     return this.request<PublicShoppingNote>("PATCH", "/shopping-notes/change-line/", data);
   }
 
-  changePlacement(tokens: string[]) {
-    return this.request<PublicShoppingNote>("PATCH", "/shopping-notes/change-placement/", {
-      tokens,
-    });
+  // Reorder uses query params, not request body
+  changePlacement(lineTokens: string[]) {
+    const params = lineTokens.map((t) => `lines_tokens=${encodeURIComponent(t)}`).join("&");
+    return this.request<PublicShoppingNote>("PATCH", `/shopping-notes/change-placement/?${params}`);
   }
 
-  deleteShoppingNoteLine(token: string) {
-    return this.request<void>("DELETE", "/shopping-notes/delete-line/", { token });
+  // Delete line uses query param
+  deleteShoppingNoteLine(lineToken: string) {
+    return this.request<void>(
+      "DELETE",
+      `/shopping-notes/delete-line/?token=${encodeURIComponent(lineToken)}`
+    );
   }
 
-  deleteArchivedShoppingNoteLine(token: string) {
-    return this.request<void>("DELETE", "/shopping-notes/delete-line-archived/", { token });
+  deleteArchivedShoppingNoteLine(lineToken: string) {
+    return this.request<void>(
+      "DELETE",
+      `/shopping-notes/delete-line-archived/?token=${encodeURIComponent(lineToken)}`
+    );
   }
 
   clearShoppingNote() {
     return this.request<void>("DELETE", "/shopping-notes/delete-shopping-note/");
   }
 
-  toggleCompleteOnLine(token: string) {
+  toggleCompleteOnLine(lineToken: string) {
     return this.request<PublicShoppingNote>(
       "PATCH",
       "/shopping-notes/toggle-complete-on-line/",
-      { token }
+      { token: lineToken }
     );
   }
 
   getArchivedShoppingNoteLines() {
-    return this.request<PublicShoppingNote>("GET", "/shopping-notes/lines-archived/");
+    return this.request<PublicShoppingNoteLineArchived[]>("GET", "/shopping-notes/lines-archived/");
   }
 
-  checkStoreProductOrderEligibility() {
-    return this.request<{ eligible: boolean; errors: unknown[] }>(
-      "GET",
-      "/shopping-notes/is-eligible-for-store-product-order/"
-    );
+  async checkStoreProductOrderEligibility(): Promise<boolean> {
+    try {
+      await this.request<void>("GET", "/shopping-notes/is-eligible-for-store-product-order/");
+      return true; // 204 = eligible
+    } catch {
+      return false;
+    }
   }
 
   applyStoreProductOrder() {
-    return this.request<PublicShoppingNote>(
-      "POST",
-      "/shopping-notes/store-product-order/",
-      {}
-    );
+    return this.request<PublicShoppingNote>("POST", "/shopping-notes/store-product-order/", {});
   }
 }

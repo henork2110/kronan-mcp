@@ -10,13 +10,13 @@ export function registerListTools(server: McpServer) {
     {},
     async () => {
       const client = getClient();
-      const lists = await client.listProductLists();
+      const result = await client.listProductLists();
 
-      if (!lists.length) {
+      if (!result.results.length) {
         return { content: [{ type: "text", text: "No saved product lists yet." }] };
       }
 
-      const lines = lists.map(
+      const lines = result.results.map(
         (l) => `• **${l.name}** [token: ${l.token}]${l.description ? ` — ${l.description}` : ""}`
       );
       return { content: [{ type: "text", text: `**Your product lists:**\n\n${lines.join("\n")}` }] };
@@ -25,7 +25,7 @@ export function registerListTools(server: McpServer) {
 
   server.tool(
     "get_product_list",
-    "Get details of a specific saved product list including all items.",
+    "Get all items in a specific saved product list.",
     {
       token: z.string().describe("Product list token (from list_product_lists)"),
     },
@@ -39,7 +39,7 @@ export function registerListTools(server: McpServer) {
 
       const lines = list.items.map((item) => {
         const price = item.product.onSale ? item.product.discountedPrice : item.product.price;
-        return `• **${item.product.name}** × ${item.quantity} — ${formatPrice(price)} each`;
+        return `• **${item.product.name}** × ${item.quantity} — ${formatPrice(price)} each [SKU: ${item.product.sku}]`;
       });
 
       return {
@@ -64,46 +64,24 @@ export function registerListTools(server: McpServer) {
       const client = getClient();
       const list = await client.createProductList(name, description);
       return {
-        content: [
-          {
-            type: "text",
-            text: `✅ Created list **${list.name}** [token: ${list.token}]`,
-          },
-        ],
+        content: [{ type: "text", text: `✅ Created list **${list.name}** [token: ${list.token}]` }],
       };
     }
   );
 
   server.tool(
     "add_item_to_product_list",
-    "Add or update a product in a saved product list.",
+    "Add or update a product in a saved list. Set quantity to 0 to remove it.",
     {
       list_token: z.string().describe("Product list token"),
-      sku: z.string().describe("Product SKU to add"),
-      quantity: z.number().int().min(1).default(1).describe("Quantity"),
+      sku: z.string().describe("Product SKU"),
+      quantity: z.number().int().min(0).default(1),
     },
     async ({ list_token, sku, quantity }) => {
       const client = getClient();
       await client.updateProductListItem(list_token, sku, quantity);
-      return {
-        content: [{ type: "text", text: `✅ Added SKU ${sku} (×${quantity}) to list.` }],
-      };
-    }
-  );
-
-  server.tool(
-    "remove_item_from_product_list",
-    "Remove a product from a saved list by setting quantity to 0.",
-    {
-      list_token: z.string().describe("Product list token"),
-      sku: z.string().describe("Product SKU to remove"),
-    },
-    async ({ list_token, sku }) => {
-      const client = getClient();
-      await client.updateProductListItem(list_token, sku, 0);
-      return {
-        content: [{ type: "text", text: `✅ Removed SKU ${sku} from list.` }],
-      };
+      const action = quantity === 0 ? "Removed" : `Added × ${quantity}`;
+      return { content: [{ type: "text", text: `✅ ${action} SKU ${sku} in list.` }] };
     }
   );
 
@@ -112,15 +90,13 @@ export function registerListTools(server: McpServer) {
     "Rename or update the description of a product list.",
     {
       token: z.string().describe("Product list token"),
-      name: z.string().max(100).optional().describe("New name"),
-      description: z.string().optional().describe("New description"),
+      name: z.string().max(100).optional(),
+      description: z.string().optional(),
     },
     async ({ token, name, description }) => {
       const client = getClient();
       const list = await client.updateProductList(token, { name, description });
-      return {
-        content: [{ type: "text", text: `✅ Updated list: **${list.name}**` }],
-      };
+      return { content: [{ type: "text", text: `✅ Updated list: **${list.name}**` }] };
     }
   );
 
@@ -133,24 +109,20 @@ export function registerListTools(server: McpServer) {
     async ({ token }) => {
       const client = getClient();
       await client.deleteProductList(token);
-      return {
-        content: [{ type: "text", text: `✅ Product list deleted.` }],
-      };
+      return { content: [{ type: "text", text: "✅ Product list deleted." }] };
     }
   );
 
   server.tool(
     "sort_product_list",
-    "Sort a product list by store department layout for efficient shopping.",
+    "Sort a product list by store department layout for efficient in-store shopping.",
     {
       token: z.string().describe("Product list token"),
     },
     async ({ token }) => {
       const client = getClient();
       await client.sortProductListItems(token);
-      return {
-        content: [{ type: "text", text: `✅ List sorted by store layout.` }],
-      };
+      return { content: [{ type: "text", text: "✅ List sorted by store layout." }] };
     }
   );
 }

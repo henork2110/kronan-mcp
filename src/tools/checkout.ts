@@ -2,37 +2,23 @@ import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { z } from "zod";
 import { getClient } from "../context.js";
 import { formatPrice } from "../matching/matcher.js";
+import type { PublicCheckout } from "../kronan/types.js";
 
-function formatCheckout(checkout: {
-  token: string;
-  lines: Array<{
-    id: number;
-    quantity: number;
-    product: { name: string; sku: string; price: number; discountedPrice: number; onSale: boolean; temporaryShortage: boolean };
-    total: number;
-    substitution: boolean;
-  }>;
-  total: number;
-  subtotal: number;
-  baggingFee: number;
-  serviceFee: number;
-  shippingFee: number;
-}): string {
-  if (!checkout.lines.length) {
-    return "Your cart is empty.";
-  }
+function formatCheckout(checkout: PublicCheckout): string {
+  if (!checkout.lines.length) return "Your cart is empty.";
 
   const lines = checkout.lines.map((line) => {
     const unitPrice = line.product.onSale ? line.product.discountedPrice : line.product.price;
-    const sub = line.substitution ? " (substitution allowed)" : "";
+    const sale = line.product.onSale ? " 🔖" : "";
     const shortage = line.product.temporaryShortage ? " ⚠️" : "";
-    return `• **${line.product.name}**${shortage} × ${line.quantity} — ${formatPrice(line.total)} [line ID: ${line.id}]${sub}`;
+    const sub = line.substitution ? " (sub allowed)" : "";
+    return `• **${line.product.name}**${sale}${shortage} × ${line.quantity} — ${formatPrice(line.total)} [line ID: ${line.id}]${sub}`;
   });
 
   const fees = [
     checkout.baggingFee ? `Bagging fee: ${formatPrice(checkout.baggingFee)}` : null,
     checkout.serviceFee ? `Service fee: ${formatPrice(checkout.serviceFee)}` : null,
-    checkout.shippingFee ? `Shipping fee: ${formatPrice(checkout.shippingFee)}` : null,
+    checkout.shippingFee ? `Shipping: ${formatPrice(checkout.shippingFee)}` : null,
   ]
     .filter(Boolean)
     .join("\n");
@@ -43,7 +29,7 @@ function formatCheckout(checkout: {
     lines.join("\n"),
     "",
     `Subtotal: ${formatPrice(checkout.subtotal)}`,
-    fees,
+    fees || null,
     `**Total: ${formatPrice(checkout.total)}**`,
   ]
     .filter((l) => l !== null)
@@ -53,7 +39,7 @@ function formatCheckout(checkout: {
 export function registerCheckoutTools(server: McpServer) {
   server.tool(
     "get_checkout",
-    "Get the current active cart/checkout with all items, quantities, and total price.",
+    "Get the current active cart with all items, quantities, and total price.",
     {},
     async () => {
       const client = getClient();
@@ -64,81 +50,58 @@ export function registerCheckoutTools(server: McpServer) {
 
   server.tool(
     "add_items_to_checkout",
-    "Add items to the cart without removing existing items. Use this to add products to an existing cart.",
+    "Add items to the cart without removing existing items.",
     {
-      items: z
-        .array(
-          z.object({
-            sku: z.string().describe("Product SKU"),
-            quantity: z.number().int().min(1).max(500).default(1).describe("Quantity"),
-            substitution: z
-              .boolean()
-              .default(true)
-              .describe("Allow substitution if out of stock"),
-          })
-        )
-        .describe("Items to add"),
+      items: z.array(
+        z.object({
+          sku: z.string().describe("Product SKU"),
+          quantity: z.number().int().min(1).max(500).default(1),
+          substitution: z.boolean().default(true).describe("Allow substitution if out of stock"),
+        })
+      ),
     },
     async ({ items }) => {
       const client = getClient();
       const checkout = await client.setCheckoutLines({ lines: items, replace: false });
       return {
-        content: [
-          {
-            type: "text",
-            text: `✅ Items added to cart.\n\n${formatCheckout(checkout)}`,
-          },
-        ],
+        content: [{ type: "text", text: `✅ Items added to cart.\n\n${formatCheckout(checkout)}` }],
       };
     }
   );
 
   server.tool(
     "replace_checkout_lines",
-    "Replace ALL items in the cart with a new set of items. Use with care — this clears the existing cart first.",
+    "Replace ALL items in the cart with a new set. Clears the existing cart first.",
     {
-      items: z
-        .array(
-          z.object({
-            sku: z.string().describe("Product SKU"),
-            quantity: z.number().int().min(1).max(500).default(1),
-            substitution: z.boolean().default(true),
-          })
-        )
-        .describe("New cart contents"),
+      items: z.array(
+        z.object({
+          sku: z.string(),
+          quantity: z.number().int().min(1).max(500).default(1),
+          substitution: z.boolean().default(true),
+        })
+      ),
     },
     async ({ items }) => {
       const client = getClient();
       const checkout = await client.setCheckoutLines({ lines: items, replace: true });
       return {
-        content: [
-          {
-            type: "text",
-            text: `✅ Cart replaced.\n\n${formatCheckout(checkout)}`,
-          },
-        ],
+        content: [{ type: "text", text: `✅ Cart replaced.\n\n${formatCheckout(checkout)}` }],
       };
     }
   );
 
   server.tool(
     "remove_item_from_checkout",
-    "Remove a specific item from the cart by setting its quantity to 0.",
+    "Remove a specific product from the cart by SKU.",
     {
       sku: z.string().describe("Product SKU to remove"),
     },
     async ({ sku }) => {
       const client = getClient();
-      // Get current cart first
       const current = await client.getCheckout();
       const remaining = current.lines
         .filter((l) => l.product.sku !== sku)
-        .map((l) => ({
-          sku: l.product.sku,
-          quantity: l.quantity,
-          substitution: l.substitution,
-        }));
-
+        .map((l) => ({ sku: l.product.sku, quantity: l.quantity, substitution: l.substitution }));
       const checkout = await client.setCheckoutLines({ lines: remaining, replace: true });
       return {
         content: [{ type: "text", text: `✅ Item removed.\n\n${formatCheckout(checkout)}` }],
@@ -148,7 +111,7 @@ export function registerCheckoutTools(server: McpServer) {
 
   server.tool(
     "find_cheaper_checkout_alternatives",
-    "For each item in the current cart, search for a cheaper alternative product. Returns suggestions with potential savings.",
+    "For each item in the cart, search for a cheaper alternative. Shows potential savings before making any changes.",
     {},
     async () => {
       const client = getClient();
@@ -162,36 +125,31 @@ export function registerCheckoutTools(server: McpServer) {
       let totalSavings = 0;
 
       for (const line of checkout.lines) {
-        const currentPrice = line.product.onSale
-          ? line.product.discountedPrice
-          : line.product.price;
-        const results = await client.searchProducts(line.product.name, 10);
+        const currentPrice = line.product.onSale ? line.product.discountedPrice : line.product.price;
+        const results = await client.searchProducts(line.product.name, 10, 1, true);
 
         const cheaper = results.hits
           .filter((p) => p.sku !== line.product.sku && !p.temporaryShortage)
-          .map((p) => ({
-            product: p,
-            effectivePrice: p.onSale ? p.discountedPrice : p.price,
-          }))
-          .filter((p) => p.effectivePrice < currentPrice)
-          .sort((a, b) => a.effectivePrice - b.effectivePrice)[0];
+          .map((p) => ({ product: p, price: p.detail?.onSale ? p.detail.discountedPrice : p.price }))
+          .filter((p) => p.price < currentPrice)
+          .sort((a, b) => a.price - b.price)[0];
 
         if (cheaper) {
-          const savings = (currentPrice - cheaper.effectivePrice) * line.quantity;
+          const savings = (currentPrice - cheaper.price) * line.quantity;
           totalSavings += savings;
           suggestions.push(
-            `• **${line.product.name}** (${formatPrice(currentPrice)}) → **${cheaper.product.name}** (${formatPrice(cheaper.effectivePrice)}) — saves ${formatPrice(savings)} [SKU: ${cheaper.product.sku}]`
+            `• **${line.product.name}** (${formatPrice(currentPrice)}) → **${cheaper.product.name}** (${formatPrice(cheaper.price)}) — saves ${formatPrice(savings)} [SKU: ${cheaper.product.sku}]`
           );
         } else {
-          suggestions.push(`• **${line.product.name}** — already the best price found`);
+          suggestions.push(`• **${line.product.name}** — already best price found`);
         }
       }
 
       if (totalSavings > 0) {
         suggestions.push(`\n💰 **Potential total savings: ${formatPrice(totalSavings)}**`);
-        suggestions.push("\nTo apply any swap, use replace_checkout_lines or add_items_to_checkout with the new SKUs.");
+        suggestions.push("\nUse add_items_to_checkout or replace_checkout_lines to apply changes.");
       } else {
-        suggestions.push("\nNo cheaper alternatives found for your current cart.");
+        suggestions.push("\nNo cheaper alternatives found.");
       }
 
       return { content: [{ type: "text", text: suggestions.join("\n") }] };

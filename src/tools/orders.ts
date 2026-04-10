@@ -6,10 +6,10 @@ import { formatPrice } from "../matching/matcher.js";
 export function registerOrderTools(server: McpServer) {
   server.tool(
     "list_orders",
-    "List the user's past orders with dates, totals, and status.",
+    "List past orders with dates, totals, and status.",
     {
-      limit: z.number().int().min(1).max(50).default(10).describe("Number of orders to return"),
-      offset: z.number().int().min(0).default(0).describe("Pagination offset"),
+      limit: z.number().int().min(1).max(50).default(10),
+      offset: z.number().int().min(0).default(0),
     },
     async ({ limit, offset }) => {
       const client = getClient();
@@ -25,12 +25,7 @@ export function registerOrderTools(server: McpServer) {
       });
 
       return {
-        content: [
-          {
-            type: "text",
-            text: `**Order history** (${result.count} total):\n\n${lines.join("\n")}`,
-          },
-        ],
+        content: [{ type: "text", text: `**Order history** (${result.count} total):\n\n${lines.join("\n")}` }],
       };
     }
   );
@@ -48,10 +43,10 @@ export function registerOrderTools(server: McpServer) {
 
       const lines = order.lines.map((l) => {
         const mutable = l.isMutable ? "" : " (locked)";
-        return `• ${l.productName} × ${l.quantity} — ${formatPrice(l.total)} [line ID: ${l.id}]${mutable}`;
+        return `• ${l.productName} × ${l.quantity} — ${formatPrice(l.total)} [ID: ${l.id}]${mutable}`;
       });
 
-      const details = [
+      const text = [
         `**Order ${order.token}**`,
         `Date: ${date}`,
         `Status: ${order.status}`,
@@ -67,7 +62,7 @@ export function registerOrderTools(server: McpServer) {
         .filter((l) => l !== null)
         .join("\n");
 
-      return { content: [{ type: "text", text: details }] };
+      return { content: [{ type: "text", text }] };
     }
   );
 
@@ -80,16 +75,16 @@ export function registerOrderTools(server: McpServer) {
     },
     async ({ order_token, line_ids }) => {
       const client = getClient();
-      await client.deleteOrderLines(order_token, line_ids);
+      const order = await client.deleteOrderLines(order_token, line_ids);
       return {
-        content: [{ type: "text", text: `✅ Lines ${line_ids.join(", ")} removed from order ${order_token}.` }],
+        content: [{ type: "text", text: `✅ Lines removed. New total: ${formatPrice(order.total)}` }],
       };
     }
   );
 
   server.tool(
     "toggle_order_substitution",
-    "Toggle whether substitution is allowed on specific order lines.",
+    "Toggle substitution allowance on specific order lines.",
     {
       order_token: z.string().describe("Order token"),
       line_ids: z.array(z.number().int()).describe("Line IDs to toggle"),
@@ -98,30 +93,24 @@ export function registerOrderTools(server: McpServer) {
       const client = getClient();
       await client.toggleOrderLineSubstitution(order_token, line_ids);
       return {
-        content: [{ type: "text", text: `✅ Substitution toggled for lines ${line_ids.join(", ")} in order ${order_token}.` }],
+        content: [{ type: "text", text: `✅ Substitution toggled for lines ${line_ids.join(", ")}.` }],
       };
     }
   );
 
   server.tool(
     "lower_order_quantities",
-    "Reduce quantities on specific order lines.",
+    "Reduce all specified order lines to the same target quantity.",
     {
       order_token: z.string().describe("Order token"),
-      lines: z
-        .array(
-          z.object({
-            id: z.number().int().describe("Line ID"),
-            quantity: z.number().int().min(1).describe("New lower quantity"),
-          })
-        )
-        .describe("Lines to update with new quantities"),
+      line_ids: z.array(z.number().int()).describe("Line IDs to reduce"),
+      quantity: z.number().int().min(0).describe("New quantity (must be lower than current; 0 removes the line)"),
     },
-    async ({ order_token, lines }) => {
+    async ({ order_token, line_ids, quantity }) => {
       const client = getClient();
-      await client.lowerOrderLineQuantities(order_token, lines);
+      const order = await client.lowerOrderLineQuantities(order_token, line_ids, quantity);
       return {
-        content: [{ type: "text", text: `✅ Quantities updated for order ${order_token}.` }],
+        content: [{ type: "text", text: `✅ Quantities updated. New total: ${formatPrice(order.total)}` }],
       };
     }
   );

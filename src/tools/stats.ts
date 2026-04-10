@@ -7,8 +7,8 @@ export function registerStatsTools(server: McpServer) {
     "get_purchase_stats",
     "Get the user's purchase history — products they buy most often, ordered by recency.",
     {
-      limit: z.number().int().min(1).max(50).default(20).describe("Number of items to return"),
-      offset: z.number().int().min(0).default(0).describe("Pagination offset"),
+      limit: z.number().int().min(1).max(50).default(20),
+      offset: z.number().int().min(0).default(0),
     },
     async ({ limit, offset }) => {
       const client = getClient();
@@ -19,10 +19,12 @@ export function registerStatsTools(server: McpServer) {
       }
 
       const lines = result.results
-        .filter((s) => !s.ignored)
+        .filter((s) => !s.isIgnored)
         .map((s) => {
-          const date = new Date(s.lastPurchased).toLocaleDateString("is-IS");
-          return `• **${s.productName}** [SKU: ${s.sku}] — last bought ${date}`;
+          const date = s.lastPurchaseDate
+            ? new Date(s.lastPurchaseDate).toLocaleDateString("is-IS")
+            : "unknown";
+          return `• **${s.product.name}** [SKU: ${s.product.sku}] — bought ${s.purchaseCount}× — last: ${date}`;
         });
 
       return {
@@ -38,16 +40,21 @@ export function registerStatsTools(server: McpServer) {
 
   server.tool(
     "hide_from_purchase_history",
-    "Hide a product from appearing in your purchase history.",
+    "Hide or restore a product in your purchase history.",
     {
       id: z.number().int().describe("Purchase stat ID (from get_purchase_stats)"),
-      ignored: z.boolean().default(true).describe("True to hide, false to show again"),
+      is_ignored: z.boolean().default(true).describe("True to hide, false to restore"),
     },
-    async ({ id, ignored }) => {
+    async ({ id, is_ignored }) => {
       const client = getClient();
-      await client.setPurchaseStatIgnored(id, ignored);
+      await client.setPurchaseStatIgnored(id, is_ignored);
       return {
-        content: [{ type: "text", text: `✅ Item ${ignored ? "hidden from" : "restored to"} purchase history.` }],
+        content: [
+          {
+            type: "text",
+            text: `✅ Item ${is_ignored ? "hidden from" : "restored to"} purchase history.`,
+          },
+        ],
       };
     }
   );

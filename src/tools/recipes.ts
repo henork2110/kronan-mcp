@@ -218,10 +218,10 @@ export function registerRecipeTools(server: McpServer) {
         (p) => p.sku !== current_sku && !p.temporaryShortage
       );
 
-      // Sort by effective price
+      // Sort by effective price (use detail.discountedPrice if on sale)
       candidates.sort((a, b) => {
-        const priceA = a.onSale ? a.discountedPrice : a.price;
-        const priceB = b.onSale ? b.discountedPrice : b.price;
+        const priceA = a.detail?.onSale ? a.detail.discountedPrice : a.price;
+        const priceB = b.detail?.onSale ? b.detail.discountedPrice : b.price;
         return priceA - priceB;
       });
 
@@ -232,8 +232,8 @@ export function registerRecipeTools(server: McpServer) {
       }
 
       const lines = candidates.map((p) => {
-        const price = p.onSale ? p.discountedPrice : p.price;
-        const sale = p.onSale ? ` 🔖 (was ${formatPrice(p.price)})` : "";
+        const price = p.detail?.onSale ? p.detail.discountedPrice : p.price;
+        const sale = p.detail?.onSale ? ` 🔖 (was ${formatPrice(p.price)})` : "";
         const perKilo = p.pricePerKilo ? ` — ${formatPrice(p.pricePerKilo)}/kg` : "";
         return `• **${p.name}** [${p.sku}] — ${formatPrice(price)}${sale}${perKilo}`;
       });
