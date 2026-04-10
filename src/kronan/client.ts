@@ -96,6 +96,11 @@ export class KronanClient {
     );
   }
 
+  // Debug: expose raw request for diagnostics
+  async rawRequest<T>(method: string, path: string, body?: unknown): Promise<T> {
+    return this.request<T>(method, path, body);
+  }
+
   // Checkout
   async getCheckout(): Promise<PublicCheckout> {
     const result = await this.request<PublicCheckout | PublicCheckout[]>("GET", "/checkout/");

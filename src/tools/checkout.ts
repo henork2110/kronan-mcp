@@ -153,6 +153,39 @@ export function registerCheckoutTools(server: McpServer) {
   );
 
   server.tool(
+    "debug_cart_clear",
+    "Diagnostic tool: attempts to clear the cart and returns the raw HTTP status + response body from Krónan so we can see what the API actually says.",
+    {},
+    async () => {
+      const client = getClient();
+
+      // First get current cart
+      const before = await client.getCheckout();
+
+      // Call rawRequest directly to see the real response
+      const raw = await client.rawRequest("POST", "/checkout/lines/", {
+        lines: [],
+        replace: true,
+      }).then((data: unknown) => ({ ok: true, data }))
+        .catch((err: Error) => ({ ok: false, error: err.message }));
+
+      // Re-fetch to see actual state
+      const after = await client.getCheckout();
+
+      return {
+        content: [{
+          type: "text",
+          text: [
+            `**Before:** ${before.lines.length} items, total ${formatPrice(before.total)}`,
+            `**API response:** ${JSON.stringify(raw, null, 2)}`,
+            `**After re-fetch:** ${after.lines.length} items, total ${formatPrice(after.total)}`,
+          ].join("\n\n"),
+        }],
+      };
+    }
+  );
+
+  server.tool(
     "find_cheaper_checkout_alternatives",
     "For each item in the cart, search for a cheaper alternative. Shows potential savings before making any changes.",
     {},
