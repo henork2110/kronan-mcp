@@ -140,36 +140,65 @@ export function registerCheckoutTools(server: McpServer) {
 
   server.tool(
     "clear_checkout",
-    "Remove ALL items from the cart.",
+    "Remove ALL items from the cart. Returns full diagnostic info.",
     {},
     async () => {
       const client = getClient();
       const current = await client.getCheckout();
+
+      const log: string[] = [];
+      log.push(`**BEFORE:** ${current.lines.length} items, total ${formatPrice(current.total)}, checkout token: \`${current.token}\``);
+
       if (!current.lines.length) {
         return { content: [{ type: "text", text: "Cart is already empty." }] };
       }
 
       const allLineIds = current.lines.map((l) => l.id);
+      log.push(`**Line IDs to delete:** [${allLineIds.join(", ")}]`);
 
-      // Use lower-quantity-lines with quantity: 0 to delete every line.
-      // replace: true + empty array is silently ignored by the Krónan API.
+      // Attempt 1: lower-quantity-lines with quantity: 0 using checkout token
+      log.push(`\n**Attempt 1:** POST /orders/${current.token}/lower-quantity-lines/ {lineIds, quantity: 0}`);
       try {
-        await client.lowerCheckoutLineQuantities(current.token, allLineIds, 0);
-      } catch {
-        // Fallback: replace with empty list (may not work but worth trying)
-        await client.setCheckoutLines({ lines: [], replace: true });
+        const r1 = await client.lowerCheckoutLineQuantities(current.token, allLineIds, 0);
+        log.push(`→ success, response: \`${JSON.stringify(r1).slice(0, 300)}\``);
+      } catch (e) {
+        log.push(`→ failed: ${(e as Error).message}`);
       }
 
-      const updated = await client.getCheckout();
+      // Re-fetch after attempt 1
+      const mid = await client.getCheckout();
+      log.push(`\n**After attempt 1:** ${mid.lines.length} items, total ${formatPrice(mid.total)}`);
 
-      return {
-        content: [{
-          type: "text",
-          text: updated.lines.length === 0
-            ? `✅ Cart cleared.`
-            : `⚠️ Cart still has ${updated.lines.length} items.\n\n${formatCheckout(updated)}`,
-        }],
-      };
+      if (mid.lines.length > 0) {
+        // Attempt 2: replace with empty array
+        log.push(`\n**Attempt 2:** POST /checkout/lines/ {lines: [], replace: true}`);
+        try {
+          const r2 = await client.rawRequest("POST", "/checkout/lines/", { lines: [], replace: true });
+          log.push(`→ success, response lines count: ${(r2 as any)?.lines?.length ?? "?"}`);
+        } catch (e) {
+          log.push(`→ failed: ${(e as Error).message}`);
+        }
+
+        // Attempt 3: set each line to quantity 0 via setCheckoutLines
+        const final1 = await client.getCheckout();
+        log.push(`\n**After attempt 2:** ${final1.lines.length} items`);
+
+        if (final1.lines.length > 0) {
+          log.push(`\n**Attempt 3:** setCheckoutLines with each sku quantity:0`);
+          try {
+            const zeroLines = final1.lines.map((l) => ({ sku: l.product.sku, quantity: 0, substitution: false }));
+            await client.setCheckoutLines({ lines: zeroLines, replace: false });
+            log.push(`→ success`);
+          } catch (e) {
+            log.push(`→ failed: ${(e as Error).message}`);
+          }
+        }
+      }
+
+      const final = await client.getCheckout();
+      log.push(`\n**FINAL:** ${final.lines.length} items, total ${formatPrice(final.total)}`);
+
+      return { content: [{ type: "text", text: log.join("\n") }] };
     }
   );
 
