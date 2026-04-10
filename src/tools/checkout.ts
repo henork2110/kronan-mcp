@@ -98,13 +98,28 @@ export function registerCheckoutTools(server: McpServer) {
     },
     async ({ sku }) => {
       const client = getClient();
-      // Set quantity: 0 — explicit removal per Krónan API spec
-      const checkout = await client.setCheckoutLines({
-        lines: [{ sku, quantity: 0 }],
-        replace: false,
-      });
+      const current = await client.getCheckout();
+      const before = current.lines.length;
+
+      // Build new list excluding this SKU, then replace entire cart
+      const remaining = current.lines
+        .filter((l) => l.product.sku !== sku)
+        .map((l) => ({ sku: l.product.sku, quantity: l.quantity, substitution: l.substitution }));
+
+      await client.setCheckoutLines({ lines: remaining, replace: true });
+
+      // Re-fetch to confirm actual server state
+      const updated = await client.getCheckout();
+      const after = updated.lines.length;
+      const removed = before - after;
+
       return {
-        content: [{ type: "text", text: `✅ Item removed.\n\n${formatCheckout(checkout)}` }],
+        content: [{
+          type: "text",
+          text: removed > 0
+            ? `✅ Item removed (${before} → ${after} items).\n\n${formatCheckout(updated)}`
+            : `⚠️ Item not found in cart (SKU: ${sku}). Cart unchanged.\n\n${formatCheckout(updated)}`,
+        }],
       };
     }
   );
@@ -115,17 +130,24 @@ export function registerCheckoutTools(server: McpServer) {
     {},
     async () => {
       const client = getClient();
-      // Get current lines and set every item to quantity: 0
       const current = await client.getCheckout();
       if (!current.lines.length) {
         return { content: [{ type: "text", text: "Cart is already empty." }] };
       }
-      const checkout = await client.setCheckoutLines({
-        lines: current.lines.map((l) => ({ sku: l.product.sku, quantity: 0 })),
-        replace: false,
-      });
+
+      // Replace with empty list — confirmed working pattern from Krónan CLI
+      await client.setCheckoutLines({ lines: [], replace: true });
+
+      // Re-fetch to confirm actual server state
+      const updated = await client.getCheckout();
+
       return {
-        content: [{ type: "text", text: `✅ Cart cleared.\n\n${formatCheckout(checkout)}` }],
+        content: [{
+          type: "text",
+          text: updated.lines.length === 0
+            ? `✅ Cart cleared.`
+            : `⚠️ Cart still has ${updated.lines.length} items after clear attempt.\n\n${formatCheckout(updated)}`,
+        }],
       };
     }
   );
