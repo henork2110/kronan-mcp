@@ -144,11 +144,22 @@ export class KronanClient {
     );
   }
 
-  // Lowers all specified lines to the same target quantity
+  // Lowers all specified lines to the same target quantity (orders)
   lowerOrderLineQuantities(orderToken: string, lineIds: number[], quantity: number) {
     return this.request<PublicOrder>(
       "POST",
       `/orders/${encodeURIComponent(orderToken)}/lower-quantity-lines/`,
+      { lineIds, quantity }
+    );
+  }
+
+  // Lower/delete checkout lines using the checkout token via the orders endpoint.
+  // quantity: 0 removes the line entirely. The checkout token doubles as an order token
+  // in the Krónan API — replace: true with empty array is silently ignored.
+  lowerCheckoutLineQuantities(checkoutToken: string, lineIds: number[], quantity: number) {
+    return this.request<unknown>(
+      "POST",
+      `/orders/${encodeURIComponent(checkoutToken)}/lower-quantity-lines/`,
       { lineIds, quantity }
     );
   }

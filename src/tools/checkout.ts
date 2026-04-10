@@ -101,14 +101,28 @@ export function registerCheckoutTools(server: McpServer) {
       const current = await client.getCheckout();
       const before = current.lines.length;
 
-      // Build new list excluding this SKU, then replace entire cart
-      const remaining = current.lines
-        .filter((l) => l.product.sku !== sku)
-        .map((l) => ({ sku: l.product.sku, quantity: l.quantity, substitution: l.substitution }));
+      const line = current.lines.find((l) => l.product.sku === sku);
+      if (!line) {
+        return {
+          content: [{
+            type: "text",
+            text: `⚠️ Item not found in cart (SKU: ${sku}). Cart unchanged.\n\n${formatCheckout(current)}`,
+          }],
+        };
+      }
 
-      await client.setCheckoutLines({ lines: remaining, replace: true });
+      // Use lower-quantity-lines with quantity: 0 to delete the line (replace: true + filtered
+      // list is silently ignored by the server when the result would be an empty or changed list)
+      try {
+        await client.lowerCheckoutLineQuantities(current.token, [line.id], 0);
+      } catch {
+        // Fallback: replace entire cart without this SKU
+        const remaining = current.lines
+          .filter((l) => l.product.sku !== sku)
+          .map((l) => ({ sku: l.product.sku, quantity: l.quantity, substitution: l.substitution }));
+        await client.setCheckoutLines({ lines: remaining, replace: true });
+      }
 
-      // Re-fetch to confirm actual server state
       const updated = await client.getCheckout();
       const after = updated.lines.length;
       const removed = before - after;
@@ -118,7 +132,7 @@ export function registerCheckoutTools(server: McpServer) {
           type: "text",
           text: removed > 0
             ? `✅ Item removed (${before} → ${after} items).\n\n${formatCheckout(updated)}`
-            : `⚠️ Item not found in cart (SKU: ${sku}). Cart unchanged.\n\n${formatCheckout(updated)}`,
+            : `⚠️ Attempted removal but cart still shows ${after} items.\n\n${formatCheckout(updated)}`,
         }],
       };
     }
@@ -135,10 +149,17 @@ export function registerCheckoutTools(server: McpServer) {
         return { content: [{ type: "text", text: "Cart is already empty." }] };
       }
 
-      // Replace with empty list — confirmed working pattern from Krónan CLI
-      await client.setCheckoutLines({ lines: [], replace: true });
+      const allLineIds = current.lines.map((l) => l.id);
 
-      // Re-fetch to confirm actual server state
+      // Use lower-quantity-lines with quantity: 0 to delete every line.
+      // replace: true + empty array is silently ignored by the Krónan API.
+      try {
+        await client.lowerCheckoutLineQuantities(current.token, allLineIds, 0);
+      } catch {
+        // Fallback: replace with empty list (may not work but worth trying)
+        await client.setCheckoutLines({ lines: [], replace: true });
+      }
+
       const updated = await client.getCheckout();
 
       return {
@@ -146,7 +167,7 @@ export function registerCheckoutTools(server: McpServer) {
           type: "text",
           text: updated.lines.length === 0
             ? `✅ Cart cleared.`
-            : `⚠️ Cart still has ${updated.lines.length} items after clear attempt.\n\n${formatCheckout(updated)}`,
+            : `⚠️ Cart still has ${updated.lines.length} items.\n\n${formatCheckout(updated)}`,
         }],
       };
     }
