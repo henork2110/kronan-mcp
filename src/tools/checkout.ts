@@ -167,7 +167,7 @@ export function registerCheckoutTools(server: McpServer) {
           : line.product.price;
         const results = await client.searchProducts(line.product.name, 10);
 
-        const cheaper = results.results
+        const cheaper = results.hits
           .filter((p) => p.sku !== line.product.sku && !p.temporaryShortage)
           .map((p) => ({
             product: p,

@@ -146,7 +146,10 @@ export interface PaginatedResult<T> {
 
 export interface SearchResult {
   count: number;
-  results: PublicProduct[];
+  page: number;
+  pageCount: number;
+  hasNextPage: boolean;
+  hits: PublicProduct[];
 }
 
 export interface PublicCategory {

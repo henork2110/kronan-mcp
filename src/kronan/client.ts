@@ -57,12 +57,12 @@ export class KronanClient {
   }
 
   // Products
-  searchProducts(q: string, limit = 20, offset = 0, withDetail = false) {
+  searchProducts(query: string, pageSize = 20, page = 1, withDetail = false) {
     return this.request<SearchResult>("POST", "/products/search/", {
-      q,
-      limit,
-      offset,
-      with_detail: withDetail,
+      query,
+      pageSize,
+      page,
+      withDetail,
     });
   }
 
@@ -75,10 +75,10 @@ export class KronanClient {
     return this.request<PublicCategory[]>("GET", "/categories/");
   }
 
-  getCategoryProducts(slug: string, limit = 48, offset = 0) {
+  getCategoryProducts(slug: string, pageSize = 48, page = 1) {
     return this.request<{ count: number; results: PublicProduct[] }>(
       "GET",
-      `/categories/${encodeURIComponent(slug)}/products/?limit=${limit}&offset=${offset}`
+      `/categories/${encodeURIComponent(slug)}/products/?page=${page}&pageSize=${pageSize}`
     );
   }
 

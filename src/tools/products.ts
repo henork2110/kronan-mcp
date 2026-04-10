@@ -16,11 +16,11 @@ export function registerProductTools(server: McpServer) {
       const client = getClient();
       const results = await client.searchProducts(query, limit, offset, false);
 
-      if (!results.results.length) {
+      if (!results.hits.length) {
         return { content: [{ type: "text", text: `No products found for "${query}".` }] };
       }
 
-      const lines = results.results.map((p) => {
+      const lines = results.hits.map((p) => {
         const price = p.onSale ? p.discountedPrice : p.price;
         const sale = p.onSale ? ` (was ${formatPrice(p.price)}, now ${formatPrice(p.discountedPrice)})` : "";
         const shortage = p.temporaryShortage ? " ⚠️ temporary shortage" : "";
@@ -31,7 +31,7 @@ export function registerProductTools(server: McpServer) {
         content: [
           {
             type: "text",
-            text: `Found ${results.count} result(s) for "${query}" (showing ${results.results.length}):\n\n${lines.join("\n")}`,
+            text: `Found ${results.count} result(s) for "${query}" (showing ${results.hits.length}):\n\n${lines.join("\n")}`,
           },
         ],
       };

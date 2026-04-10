@@ -214,7 +214,7 @@ export function registerRecipeTools(server: McpServer) {
       const client = getClient();
       const results = await client.searchProducts(product_name, 20);
 
-      let candidates = results.results.filter(
+      let candidates = results.hits.filter(
         (p) => p.sku !== current_sku && !p.temporaryShortage
       );
 

@@ -87,9 +87,9 @@ export async function matchIngredient(
   for (const term of ingredient.searchTerms) {
     try {
       const results = await client.searchProducts(term, 10);
-      if (!results.results.length) continue;
+      if (!results.hits.length) continue;
 
-      for (const product of results.results) {
+      for (const product of results.hits) {
         const score = scoreProduct(product, ingredient.name);
         if (score > bestScore) {
           // Budget mode adjustments
