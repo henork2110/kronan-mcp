@@ -110,6 +110,19 @@ export function registerCheckoutTools(server: McpServer) {
   );
 
   server.tool(
+    "clear_checkout",
+    "Remove ALL items from the cart.",
+    {},
+    async () => {
+      const client = getClient();
+      const checkout = await client.setCheckoutLines({ lines: [], replace: true });
+      return {
+        content: [{ type: "text", text: `✅ Cart cleared.\n\n${formatCheckout(checkout)}` }],
+      };
+    }
+  );
+
+  server.tool(
     "find_cheaper_checkout_alternatives",
     "For each item in the cart, search for a cheaper alternative. Shows potential savings before making any changes.",
     {},

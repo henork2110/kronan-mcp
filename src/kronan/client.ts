@@ -58,10 +58,10 @@ export class KronanClient {
     return res.json() as Promise<T>;
   }
 
-  // Identity — returns array, unwrap first element
+  // Identity — API returns array, defensively handle both
   async getMe(): Promise<PublicMe> {
-    const result = await this.request<PublicMe[]>("GET", "/me/");
-    return result[0];
+    const result = await this.request<PublicMe | PublicMe[]>("GET", "/me/");
+    return Array.isArray(result) ? result[0] : result;
   }
 
   // Products
@@ -90,10 +90,12 @@ export class KronanClient {
     );
   }
 
-  // Checkout — returns array, unwrap first element
+  // Checkout — API returns array, but defensively handle single object too
   async getCheckout(): Promise<PublicCheckout> {
-    const result = await this.request<PublicCheckout[]>("GET", "/checkout/");
-    return result[0];
+    const result = await this.request<PublicCheckout | PublicCheckout[]>("GET", "/checkout/");
+    const checkout = Array.isArray(result) ? result[0] : result;
+    if (!checkout) throw new Error("No active checkout found.");
+    return checkout;
   }
 
   setCheckoutLines(input: PublicLinesAddInput) {
@@ -207,10 +209,12 @@ export class KronanClient {
     );
   }
 
-  // Shopping notes — returns array, unwrap first element
+  // Shopping notes — API returns array, defensively handle both
   async getShoppingNote(): Promise<PublicShoppingNote> {
-    const result = await this.request<PublicShoppingNote[]>("GET", "/shopping-notes/");
-    return result[0];
+    const result = await this.request<PublicShoppingNote | PublicShoppingNote[]>("GET", "/shopping-notes/");
+    const note = Array.isArray(result) ? result[0] : result;
+    if (!note) throw new Error("No shopping note found.");
+    return note;
   }
 
   addShoppingNoteLine(data: { text?: string; sku?: string; quantity?: number }) {
